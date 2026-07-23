@@ -17,6 +17,8 @@
 
 Grok Search MCP 是一个基于 [FastMCP](https://github.com/jlowin/fastmcp) 构建的 MCP 服务器，采用**双引擎架构**：**Grok** 负责 AI 驱动的智能搜索，**Tavily** 负责高保真网页抓取与站点映射，各取所长为 Claude Code / Cherry Studio 等LLM Client提供完整的实时网络访问能力。
 
+> 实验性两步搜索 MVP：项目另提供独立的 `grok-search-mvp` 入口，只暴露“Exa + Tavily 搜索”和“OpenAI 兼容模型整理”两个工具。配置与调用流程见 [docs/MVP.md](./docs/MVP.md)，原有入口不受影响。
+
 ```
 Claude ──MCP──► Grok Search Server
                   ├─ web_search  ───► Grok API（AI 搜索）
