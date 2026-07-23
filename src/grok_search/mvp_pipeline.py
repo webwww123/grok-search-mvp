@@ -99,6 +99,13 @@ class MVPSettings:
         )
 
 
+class SynthesisAPIError(RuntimeError):
+    def __init__(self, status_code: int, upstream_message: str) -> None:
+        self.status_code = status_code
+        self.upstream_message = upstream_message
+        super().__init__(f"Synthesis API HTTP {status_code}: {upstream_message}")
+
+
 class SearchCache:
     """Small in-memory TTL cache keyed by opaque search IDs."""
 
@@ -436,12 +443,14 @@ class SearchPipeline:
         try:
             raw_output = await self._call_synthesis(prompt)
         except Exception as exc:
+            error = self._classify_synthesis_exception(exc)
             return {
                 **self._error(
-                    "SYNTHESIS_REQUEST_FAILED",
-                    _bounded_text(str(exc), 700),
-                    "Retry synthesize_search with the same search_id. The cached source evidence is included below.",
+                    error["code"],
+                    error["message"],
+                    error["resolution"],
                     search_id=search_id,
+                    retryable=error["retryable"],
                 ),
                 "query": cached["query"],
                 "sources": cached["sources"],
@@ -473,10 +482,15 @@ class SearchPipeline:
             for name, details in searched.get("provider_status", {}).items()
         }
         if not searched.get("ok"):
+            error = searched.get("error") or {}
             return {
                 "ok": False,
+                "status": "search_unavailable",
                 "query": (query or "").strip(),
-                "error": searched.get("error"),
+                "code": error.get("code", "SEARCH_UNAVAILABLE"),
+                "message": error.get("message", "Search providers returned no usable results."),
+                "resolution": error.get("resolution", "Retry with a clearer query."),
+                "retryable": error.get("retryable", True),
                 "search_meta": {
                     "results_requested_per_provider": RESULTS_PER_PROVIDER,
                     "providers": compact_provider_status,
@@ -487,10 +501,19 @@ class SearchPipeline:
             searched["search_id"], instructions
         )
         if not synthesized.get("ok"):
+            error = synthesized.get("error") or {}
             return {
                 "ok": False,
+                "status": "internal_ai_unavailable",
                 "query": searched["query"],
-                "error": synthesized.get("error"),
+                "code": error.get("code", "INTERNAL_AI_UNAVAILABLE"),
+                "message": error.get(
+                    "message", "The internal synthesis AI is currently unavailable."
+                ),
+                "resolution": error.get(
+                    "resolution", "Retry later or check synthesis service configuration."
+                ),
+                "retryable": error.get("retryable", True),
                 "search_meta": {
                     "results_requested_per_provider": RESULTS_PER_PROVIDER,
                     "sources_considered": searched["source_count"],
@@ -678,7 +701,20 @@ Final checks before responding: JSON only; no raw-source dump; maximum 12 key fi
             if response.status_code in (400, 422):
                 body.pop("response_format", None)
                 response = await client.post(endpoint, headers=headers, json=body)
-            response.raise_for_status()
+            if response.is_error:
+                upstream_message = response.reason_phrase or "Unknown upstream error"
+                try:
+                    payload = response.json()
+                    upstream_message = str(
+                        (payload.get("error") or {}).get("message")
+                        or payload.get("message")
+                        or upstream_message
+                    )
+                except (ValueError, TypeError, AttributeError):
+                    pass
+                raise SynthesisAPIError(
+                    response.status_code, _bounded_text(upstream_message, 500)
+                )
             payload = response.json()
         content = payload.get("choices", [{}])[0].get("message", {}).get("content", "")
         if isinstance(content, list):
@@ -698,6 +734,7 @@ Final checks before responding: JSON only; no raw-source dump; maximum 12 key fi
         message: str,
         resolution: str,
         search_id: str | None = None,
+        retryable: bool | None = None,
     ) -> dict[str, Any]:
         return {
             "ok": False,
@@ -707,8 +744,59 @@ Final checks before responding: JSON only; no raw-source dump; maximum 12 key fi
                 "code": code,
                 "message": message,
                 "resolution": resolution,
-                "retryable": code not in {"INVALID_QUERY", "INVALID_MAX_RESULTS"},
+                "retryable": (
+                    retryable
+                    if retryable is not None
+                    else code not in {"INVALID_QUERY", "INVALID_MAX_RESULTS"}
+                ),
             },
+        }
+
+    @staticmethod
+    def _classify_synthesis_exception(exc: Exception) -> dict[str, Any]:
+        if isinstance(exc, SynthesisAPIError):
+            message_lower = exc.upstream_message.lower()
+            if exc.status_code == 402 or "insufficient balance" in message_lower:
+                return {
+                    "code": "INTERNAL_AI_INSUFFICIENT_BALANCE",
+                    "message": (
+                        "The internal DeepSeek AI cannot complete this search because its API "
+                        "account balance is insufficient."
+                    ),
+                    "resolution": (
+                        "Recharge the configured DeepSeek account or replace SYNTH_API_KEY, then "
+                        "retry the same GrokSearchMVP:web_search call."
+                    ),
+                    "retryable": False,
+                }
+            if exc.status_code in {401, 403}:
+                return {
+                    "code": "INTERNAL_AI_AUTHENTICATION_FAILED",
+                    "message": "The internal DeepSeek AI rejected its configured credentials.",
+                    "resolution": "Replace SYNTH_API_KEY with a valid key, then retry web_search.",
+                    "retryable": False,
+                }
+            if exc.status_code == 429:
+                return {
+                    "code": "INTERNAL_AI_RATE_LIMITED",
+                    "message": "The internal DeepSeek AI is temporarily rate-limited.",
+                    "resolution": "Wait briefly and retry the same web_search request.",
+                    "retryable": True,
+                }
+            return {
+                "code": "INTERNAL_AI_UPSTREAM_ERROR",
+                "message": (
+                    f"The internal DeepSeek AI returned HTTP {exc.status_code}: "
+                    f"{_bounded_text(exc.upstream_message, 300)}"
+                ),
+                "resolution": "Retry later; if the failure persists, check the synthesis endpoint.",
+                "retryable": exc.status_code >= 500,
+            }
+        return {
+            "code": "INTERNAL_AI_REQUEST_FAILED",
+            "message": f"The internal DeepSeek AI request failed: {_bounded_text(str(exc), 400)}",
+            "resolution": "Retry later; if the failure persists, check network and synthesis configuration.",
+            "retryable": True,
         }
 
 

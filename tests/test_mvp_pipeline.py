@@ -7,6 +7,7 @@ from grok_search.mvp_pipeline import (
     RESULTS_PER_PROVIDER,
     SearchCache,
     SearchPipeline,
+    SynthesisAPIError,
     canonicalize_url,
     normalize_and_deduplicate,
 )
@@ -244,6 +245,34 @@ async def test_missing_synthesis_config_does_not_leak_cached_sources():
     result = await pipeline.search_and_synthesize("test query")
 
     assert result["ok"] is False
-    assert result["error"]["code"] == "SYNTHESIS_NOT_CONFIGURED"
+    assert result["status"] == "internal_ai_unavailable"
+    assert result["code"] == "SYNTHESIS_NOT_CONFIGURED"
     assert "sources" not in result
     assert "raw_content" not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_public_search_flattens_insufficient_balance_error():
+    pipeline = SearchPipeline(_settings())
+
+    async def exa_search(query, max_results):
+        return [{"title": "Source", "url": "https://example.com", "raw_content": "Evidence"}]
+
+    async def tavily_search(query, max_results):
+        return []
+
+    async def synthesis(prompt):
+        raise SynthesisAPIError(402, "Insufficient Balance")
+
+    pipeline._search_exa = exa_search
+    pipeline._search_tavily = tavily_search
+    pipeline._call_synthesis = synthesis
+    result = await pipeline.search_and_synthesize("test query")
+
+    assert result["ok"] is False
+    assert result["status"] == "internal_ai_unavailable"
+    assert result["code"] == "INTERNAL_AI_INSUFFICIENT_BALANCE"
+    assert "balance is insufficient" in result["message"]
+    assert "Recharge" in result["resolution"]
+    assert result["retryable"] is False
+    assert "error" not in result
