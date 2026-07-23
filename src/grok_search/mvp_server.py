@@ -1,4 +1,4 @@
-"""Two-tool FastMCP server for the minimal search pipeline."""
+"""Compact synthesized web search with a small usage guide."""
 
 from typing import Annotated
 
@@ -13,18 +13,19 @@ pipeline = SearchPipeline()
 
 
 @mcp.tool(
-    name="search_sources",
+    name="web_search",
     output_schema=None,
     description="""
-Search Exa and Tavily concurrently, then normalize, rank, and deduplicate their evidence.
+Search the live web and return one compact, citation-backed answer.
 
-Use this first whenever the user needs current web information. It returns an opaque search_id,
-provider status, and complete normalized sources. One provider may fail without discarding the
-other provider's results. For a final written answer, pass search_id to
-GrokSearchMVP:synthesize_search. If the call fails, follow the returned error.resolution exactly.
+Use whenever the user needs current or externally verifiable information. The server searches Exa
+and Tavily with 30 results each, deduplicates evidence, and synthesizes it internally. Returns only
+the organized answer, key findings, conflicts, compact citation metadata, and provider status. Raw
+search results, excerpts, cached IDs, and page content are never exposed. If the call fails, follow
+error.resolution exactly.
 """,
 )
-async def search_sources(
+async def web_search(
     query: Annotated[
         str,
         Field(
@@ -33,44 +34,60 @@ async def search_sources(
             max_length=400,
         ),
     ],
-    max_results: Annotated[
-        int,
-        Field(
-            description="Maximum results requested from each provider; use 6 normally.",
-            ge=1,
-            le=10,
-        ),
-    ] = 6,
-) -> dict:
-    return await pipeline.search_sources(query, max_results)
-
-
-@mcp.tool(
-    name="synthesize_search",
-    output_schema=None,
-    description="""
-Turn cached search evidence into a structured, citation-backed answer using the configured
-OpenAI-compatible synthesis model.
-
-Use only after GrokSearchMVP:search_sources and pass its search_id. The result includes a summary,
-deduplicated key findings, conflicts, source_ids, and the original normalized sources. If the ID is
-expired, call search_sources again. If synthesis fails, the response still includes source evidence.
-""",
-)
-async def synthesize_search(
-    search_id: Annotated[
-        str,
-        Field(description="The exact search_id returned by GrokSearchMVP:search_sources."),
-    ],
-    focus: Annotated[
+    instructions: Annotated[
         str,
         Field(
-            description="Optional emphasis for synthesis; leave empty to answer the original query.",
-            max_length=1000,
+            description=(
+                "Optional research brief for the internal AI. State what information is needed, "
+                "relevant dates or time window, geography, preferred source types, comparison "
+                "criteria, exclusions, and desired emphasis. Example: 'Focus on changes since "
+                "2025, prefer official sources, compare security and cost, and flag conflicts.'"
+            ),
+            max_length=2000,
         ),
     ] = "",
 ) -> dict:
-    return await pipeline.synthesize_search(search_id, focus)
+    return await pipeline.search_and_synthesize(query, instructions)
+
+
+@mcp.tool(
+    name="search_guide",
+    output_schema=None,
+    description="""
+Return a short guide for using GrokSearchMVP:web_search effectively.
+
+Use only when the calling AI is unsure how to form query or instructions. This tool performs no
+search and returns no web content. It explains how to specify needed information, time window,
+source preferences, comparisons, exclusions, and desired emphasis.
+""",
+)
+async def search_guide() -> dict:
+    return {
+        "tool": "GrokSearchMVP:web_search",
+        "usage": (
+            "Put the core question in query. Use instructions as a research brief for the internal "
+            "AI: say what information matters, when it must be from, how to filter sources, and "
+            "what comparisons or conflicts to emphasize."
+        ),
+        "instructions_can_include": [
+            "time window or cutoff date",
+            "region, platform, company, or topic scope",
+            "preferred source types such as official documentation",
+            "comparison criteria and exclusions",
+            "desired depth, emphasis, or answer language",
+        ],
+        "example": {
+            "query": "Compare leading AI coding assistants",
+            "instructions": (
+                "Use information from 2026, prefer official pricing and security documentation, "
+                "compare cost and long-context support, and clearly flag conflicting claims."
+            ),
+        },
+        "returns": (
+            "Only the internal AI's organized answer and compact citation metadata; raw search "
+            "results and page content are never exposed."
+        ),
+    }
 
 
 def main() -> None:

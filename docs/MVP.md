@@ -1,11 +1,11 @@
 # Two-stage search MVP
 
-This optional server is intentionally separate from the original GrokSearch server. It exposes only:
+This optional server is intentionally separate from the original GrokSearch server. It exposes two safe tools:
 
-1. `search_sources(query, max_results=6)` — searches Exa and Tavily concurrently, normalizes and deduplicates evidence, and returns a 30-minute `search_id`.
-2. `synthesize_search(search_id, focus="")` — sends the cached evidence to an OpenAI-compatible model and returns a structured, citation-backed answer plus the original sources.
+1. `web_search(query, instructions="")` searches Exa and Tavily with 30 results each, deduplicates the evidence, sends it to the configured OpenAI-compatible model, and returns a structured citation-backed answer. `instructions` is a free-form research brief from the calling AI describing needed information, time range, filtering rules, and emphasis.
+2. `search_guide()` returns a short usage guide and example. It performs no search.
 
-One search provider may fail without discarding the other provider's results. Synthesis never calls the web directly and Tavily's generated answer is disabled.
+Raw results, excerpts, page content, and cache IDs remain server-side and are never returned through MCP. Only the synthesized answer and compact citation metadata are exposed. One search provider may fail without discarding the other provider's results. Tavily's generated answer is disabled.
 
 ## Configuration
 

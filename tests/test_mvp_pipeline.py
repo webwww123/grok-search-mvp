@@ -4,6 +4,7 @@ import pytest
 
 from grok_search.mvp_pipeline import (
     MVPSettings,
+    RESULTS_PER_PROVIDER,
     SearchCache,
     SearchPipeline,
     canonicalize_url,
@@ -58,6 +59,17 @@ def test_normalize_and_deduplicate_merges_provider_evidence():
     assert sources[0]["title"] == "A more descriptive source title"
     assert "Exa preserved detail" in sources[0]["raw_content"]
     assert "Tavily preserved detail" in sources[0]["raw_content"]
+
+
+def test_synthesis_prompt_preserves_external_research_instructions():
+    pipeline = SearchPipeline(_settings())
+    prompt = pipeline._build_synthesis_prompt(
+        {"query": "test query", "sources": []},
+        "Only use information published since 2026 and prefer official sources.",
+        "claim_matrix_v3",
+    )
+    assert "Only use information published since 2026" in prompt
+    assert "Internally build a claim matrix" in prompt
 
 
 @pytest.mark.asyncio
@@ -154,7 +166,62 @@ async def test_synthesis_parses_fenced_json_and_filters_invalid_citations():
 
 
 @pytest.mark.asyncio
-async def test_missing_synthesis_config_returns_cached_sources():
+async def test_public_search_uses_thirty_per_provider_and_hides_raw_evidence():
+    pipeline = SearchPipeline(_settings())
+    requested = {}
+
+    async def exa_search(query, max_results):
+        requested["exa"] = max_results
+        return [
+            {
+                "title": "Exa source",
+                "url": "https://example.com/exa",
+                "excerpt": "Exa evidence",
+                "raw_content": "SECRET RAW EXA EVIDENCE",
+            }
+        ]
+
+    async def tavily_search(query, max_results):
+        requested["tavily"] = max_results
+        return [
+            {
+                "title": "Tavily source",
+                "url": "https://example.com/tavily",
+                "excerpt": "Tavily evidence",
+                "raw_content": "SECRET RAW TAVILY EVIDENCE",
+            }
+        ]
+
+    async def synthesis(prompt):
+        return """{
+          "summary": "Compact answer [S1] [S2]",
+          "key_findings": [
+            {"title": "Finding", "details": "Supported detail", "source_ids": ["S1", "S2"]}
+          ],
+          "conflicts": []
+        }"""
+
+    pipeline._search_exa = exa_search
+    pipeline._search_tavily = tavily_search
+    pipeline._call_synthesis = synthesis
+    result = await pipeline.search_and_synthesize("test query")
+
+    assert requested == {
+        "exa": RESULTS_PER_PROVIDER,
+        "tavily": RESULTS_PER_PROVIDER,
+    }
+    assert result["ok"] is True
+    assert result["summary"] == "Compact answer [S1] [S2]"
+    assert len(result["citations"]) == 2
+    serialized = str(result)
+    assert "raw_content" not in serialized
+    assert "SECRET RAW" not in serialized
+    assert "search_id" not in serialized
+    assert "sources" not in result
+
+
+@pytest.mark.asyncio
+async def test_missing_synthesis_config_does_not_leak_cached_sources():
     pipeline = SearchPipeline(
         _settings(synth_api_url=None, synth_api_key=None, synth_model=None)
     )
@@ -174,9 +241,9 @@ async def test_missing_synthesis_config_returns_cached_sources():
 
     pipeline._search_exa = exa_search
     pipeline._search_tavily = tavily_search
-    search = await pipeline.search_sources("test query")
-    result = await pipeline.synthesize_search(search["search_id"])
+    result = await pipeline.search_and_synthesize("test query")
 
     assert result["ok"] is False
     assert result["error"]["code"] == "SYNTHESIS_NOT_CONFIGURED"
-    assert result["sources"][0]["url"] == "https://example.com/source"
+    assert "sources" not in result
+    assert "raw_content" not in str(result)
