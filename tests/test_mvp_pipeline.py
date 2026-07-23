@@ -167,7 +167,7 @@ async def test_synthesis_parses_fenced_json_and_filters_invalid_citations():
 
 
 @pytest.mark.asyncio
-async def test_public_search_uses_thirty_per_provider_and_hides_raw_evidence():
+async def test_public_search_uses_configured_provider_breadth_and_hides_raw_evidence():
     pipeline = SearchPipeline(_settings())
     requested = {}
 

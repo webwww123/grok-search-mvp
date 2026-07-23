@@ -19,7 +19,7 @@ pipeline = SearchPipeline()
 Search the live web and return one compact, citation-backed answer.
 
 Use whenever the user needs current or externally verifiable information. The server searches Exa
-and Tavily with 30 results each, deduplicates evidence, and synthesizes it internally. Returns only
+and Tavily with 15 results each, deduplicates evidence, and synthesizes it internally. Returns only
 the organized answer, key findings, conflicts, compact citation metadata, and provider status. Raw
 search results, excerpts, cached IDs, and page content are never exposed. If the call fails, follow
 error.resolution exactly.

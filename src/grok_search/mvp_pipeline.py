@@ -20,7 +20,7 @@ import httpx
 
 
 _PROVIDERS = ("exa", "tavily")
-RESULTS_PER_PROVIDER = 30
+RESULTS_PER_PROVIDER = 15
 DEFAULT_PROMPT_VERSION = "claim_matrix_v3"
 _PROMPT_VARIANTS = {
     "baseline_v1": (
@@ -760,11 +760,11 @@ Final checks before responding: JSON only; no raw-source dump; maximum 12 key fi
                 return {
                     "code": "INTERNAL_AI_INSUFFICIENT_BALANCE",
                     "message": (
-                        "The internal DeepSeek AI cannot complete this search because its API "
+                        "The internal AI cannot complete this search because its API "
                         "account balance is insufficient."
                     ),
                     "resolution": (
-                        "Recharge the configured DeepSeek account or replace SYNTH_API_KEY, then "
+                        "Recharge the configured internal AI account or replace SYNTH_API_KEY, then "
                         "retry the same GrokSearchMVP:web_search call."
                     ),
                     "retryable": False,
@@ -772,21 +772,21 @@ Final checks before responding: JSON only; no raw-source dump; maximum 12 key fi
             if exc.status_code in {401, 403}:
                 return {
                     "code": "INTERNAL_AI_AUTHENTICATION_FAILED",
-                    "message": "The internal DeepSeek AI rejected its configured credentials.",
+                    "message": "The internal AI rejected its configured credentials.",
                     "resolution": "Replace SYNTH_API_KEY with a valid key, then retry web_search.",
                     "retryable": False,
                 }
             if exc.status_code == 429:
                 return {
                     "code": "INTERNAL_AI_RATE_LIMITED",
-                    "message": "The internal DeepSeek AI is temporarily rate-limited.",
+                    "message": "The internal AI is temporarily rate-limited.",
                     "resolution": "Wait briefly and retry the same web_search request.",
                     "retryable": True,
                 }
             return {
                 "code": "INTERNAL_AI_UPSTREAM_ERROR",
                 "message": (
-                    f"The internal DeepSeek AI returned HTTP {exc.status_code}: "
+                    f"The internal AI returned HTTP {exc.status_code}: "
                     f"{_bounded_text(exc.upstream_message, 300)}"
                 ),
                 "resolution": "Retry later; if the failure persists, check the synthesis endpoint.",
@@ -794,7 +794,7 @@ Final checks before responding: JSON only; no raw-source dump; maximum 12 key fi
             }
         return {
             "code": "INTERNAL_AI_REQUEST_FAILED",
-            "message": f"The internal DeepSeek AI request failed: {_bounded_text(str(exc), 400)}",
+            "message": f"The internal AI request failed: {_bounded_text(str(exc), 400)}",
             "resolution": "Retry later; if the failure persists, check network and synthesis configuration.",
             "retryable": True,
         }
